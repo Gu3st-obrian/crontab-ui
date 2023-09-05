@@ -1,6 +1,6 @@
 /*jshint esversion: 6*/
 //load database
-var Datastore = require('nedb');
+var Datastore = require('@seald-io/nedb');
 var path = require("path");
 
 exports.db_folder = process.env.CRON_DB_PATH === undefined ? path.join(__dirname,  "crontabs") : process.env.CRON_DB_PATH;
@@ -26,9 +26,6 @@ var cron_parser = require("cron-parser");
 var cronstrue = require('cronstrue/i18n');
 var humanCronLocate = process.env.HUMANCRON ?? "en"
 
-if (!fs.existsSync(exports.log_folder)){
-    fs.mkdirSync(exports.log_folder);
-}
 
 crontab = function(name, command, schedule, stopped, logging, mailing){
 	var data = {};
@@ -49,18 +46,21 @@ crontab = function(name, command, schedule, stopped, logging, mailing){
 exports.create_new = function(name, command, schedule, logging, mailing){
 	var tab = crontab(name, command, schedule, false, logging, mailing);
 	tab.created = new Date().valueOf();
-	tab.saved = false;
+	tab.saved = !!process.env.ENABLE_AUTOSAVE;
 	db.insert(tab);
 };
 
 exports.update = function(data){
 	var tab = crontab(data.name, data.command, data.schedule, null, data.logging, data.mailing);
-	tab.saved = false;
-	db.update({_id: data._id}, tab);
+	tab.saved = !!process.env.ENABLE_AUTOSAVE;
+	db.update({ _id: data._id }, tab);
 };
 
 exports.status = function(_id, stopped){
-	db.update({_id: _id},{$set: {stopped: stopped, saved: false}});
+	db.update({ _id: _id }, { $set: { 
+		stopped: stopped, 
+		saved: !!process.env.ENABLE_AUTOSAVE,
+	}});
 };
 
 exports.remove = function(_id){
@@ -179,7 +179,11 @@ exports.set_crontab = function(env_vars, callback) {
 			crontab_string += env_vars;
 			crontab_string += "\n";
 		}
+		var unsaved_ids = [];
 		tabs.forEach(function(tab){
+			if (!tab.saved) {
+				unsaved_ids.push(tab._id);
+			}
 			if(!tab.stopped) {
 				crontab_string += tab.schedule
 				crontab_string += " "
@@ -206,10 +210,10 @@ exports.set_crontab = function(env_vars, callback) {
 						console.error(err);
 						return callback(err);
 					}
-					else {
-						db.update({},{$set: {saved: true}}, {multi: true});
-						callback();
+					if (unsaved_ids.length) {
+						db.update({ _id: { $in: unsaved_ids }, saved: false }, { $set: { saved: true } }, { multi: true });
 					}
+					callback();
 				});
 			});
 		});
